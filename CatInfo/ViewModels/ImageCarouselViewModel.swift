@@ -9,6 +9,7 @@ final class ImageCarouselViewModel: Sendable {
     private var currentPage = 0
     private var currentImageIndex = 0
     private let imagesPerPage = 10
+    private var canUploadMoreImages: Bool = true
     
     private(set) var isLoading = false
     private(set) var isImageLoading = false
@@ -76,21 +77,25 @@ final class ImageCarouselViewModel: Sendable {
     private func loadMoreImages() {
         currentPage += 1
         
-        Task {
-            do {
-                let fetchedImages = try await apiService.searchBreedImages(
-                    breedId: breedId,
-                    page: currentPage,
-                    limit: imagesPerPage
-                )
-                
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.images.append(contentsOf: fetchedImages)
-                    self.updateUI()
+        if canUploadMoreImages {
+            Task {
+                do {
+                    let fetchedImages = try await apiService.searchBreedImages(
+                        breedId: breedId,
+                        page: currentPage,
+                        limit: imagesPerPage
+                    )
+                    if fetchedImages.count < 9 {
+                        canUploadMoreImages = false
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.images.append(contentsOf: fetchedImages)
+                        self.updateUI()
+                    }
+                } catch {
+                    currentPage -= 1
                 }
-            } catch {
-                currentPage -= 1
             }
         }
     }
@@ -106,7 +111,17 @@ final class ImageCarouselViewModel: Sendable {
             showImage(at: currentImageIndex - 1)
         }
     }
-
+    
+    private func updateCurrentImage(image: NSImage) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isImageLoading = false
+            self.delegate?.didUpdateCurrentImage(image)
+            self.onCurrentImageUpdated?(image)
+            self.updateUI()
+        }
+    }
+    
     private func showImage(at index: Int) {
         guard index >= 0 && index < images.count else { return }
         
@@ -130,24 +145,19 @@ final class ImageCarouselViewModel: Sendable {
         
         let cacheKey = type(of: cacheService).makeCacheKey(from: imageUrl)
         
-        if let cachedImage = cacheService.getImage(forKey: cacheKey) {
-            isImageLoading = false
-            delegate?.didUpdateCurrentImage(cachedImage)
-            onCurrentImageUpdated?(cachedImage)
-            updateUI()
-            return
-        }
-        
         Task {
+            // Try to get from cache
+            if let cachedImage = await cacheService.getImage(forKey: cacheKey) {
+                updateCurrentImage(image: cachedImage)
+                return
+            }
+            
+            // If not in cache, fetch the image data
             do {
                 let imageData = try await apiService.fetchBreedImageData(info: image)
                 if let nsImage = NSImage(data: imageData) {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.isImageLoading = false
-                        self.delegate?.didUpdateCurrentImage(nsImage)
-                        self.onCurrentImageUpdated?(nsImage)
-                    }
+                    cacheService.saveImage(nsImage, forKey: cacheKey)
+                    updateCurrentImage(image: nsImage)
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
@@ -160,8 +170,6 @@ final class ImageCarouselViewModel: Sendable {
                 }
             }
         }
-
-        updateUI()
     }
     
     private func updateUI() {
@@ -175,4 +183,4 @@ final class ImageCarouselViewModel: Sendable {
         delegate?.didUpdatePageInfo(pageInfo)
         onPageInfoUpdated?(pageInfo)
     }
-} 
+}

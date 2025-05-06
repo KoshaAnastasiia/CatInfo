@@ -72,7 +72,16 @@ final class CatDetailViewModel: Sendable {
         
         NSWorkspace.shared.open(url)
     }
-
+    
+    private func updateImageLoading(image: NSImage) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isLoadingImage = false
+            self.delegate?.didLoadImage(image)
+            self.onImageLoaded?(image)
+        }
+    }
+    
     private func loadBreedImage() {
         guard let imageId = selectedBreed?.referenceImageId else {
             self.delegate?.didLoadImage(nil)
@@ -82,45 +91,36 @@ final class CatDetailViewModel: Sendable {
         
         isLoadingImage = true
         
-        // Check cache first
-        if let cachedImage = cacheService.getImage(forKey: imageId) {
-            isLoadingImage = false
-            self.delegate?.didLoadImage(cachedImage)
-            self.onImageLoaded?(cachedImage)
-            return
-        }
-        
-        // If not in cache, fetch from API
         Task {
+            // First, try to load from cache using image ID
+            if let cachedImage = await cacheService.getImage(forKey: imageId) {
+                updateImageLoading(image: cachedImage)
+                return
+            }
+            
+            // If not in cache, fetch image info from API
             do {
                 let imageInfo = try await apiService.fetchBreedImageInfo(imageId: imageId)
                 
                 // Try URL-based cache key
                 if let imageUrl = imageInfo.url {
                     let urlCacheKey = type(of: cacheService).makeCacheKey(from: imageUrl)
-                    if let cachedImage = cacheService.getImage(forKey: urlCacheKey) {
-                        DispatchQueue.main.async { [weak self] in
-                            guard let self else { return }
-                            self.isLoadingImage = false
-                            self.delegate?.didLoadImage(cachedImage)
-                            self.onImageLoaded?(cachedImage)
-                        }
+                    
+                    if let cachedImage = await cacheService.getImage(forKey: urlCacheKey) {
+                        updateImageLoading(image: cachedImage)
                         return
                     }
                 }
                 
-                // If still not found, fetch the image data
                 let imageData = try await apiService.fetchBreedImageData(info: imageInfo)
                 if let image = NSImage(data: imageData) {
-                    // Cache with both image ID and URL for better retrieval
                     cacheService.saveImage(image, forKey: imageId)
                     
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.isLoadingImage = false
-                        self.delegate?.didLoadImage(image)
-                        self.onImageLoaded?(image)
+                    if let imageUrl = imageInfo.url {
+                        let urlCacheKey = type(of: cacheService).makeCacheKey(from: imageUrl)
+                        cacheService.saveImage(image, forKey: urlCacheKey)
                     }
+                    updateImageLoading(image: image)
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
@@ -131,7 +131,8 @@ final class CatDetailViewModel: Sendable {
             }
         }
     }
-} 
+}
+
 
 extension NSImage : @unchecked @retroactive Sendable {
 }

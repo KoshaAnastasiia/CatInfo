@@ -81,7 +81,7 @@ final class CatAPIService: CatAPIServiceProtocol {
         
         let cacheKey = type(of: cacheService).makeCacheKey(from: imageUrlString)
         
-        if let cachedImage = cacheService.getImage(forKey: cacheKey) {
+        if let cachedImage = await cacheService.getImage(forKey: cacheKey) {
             if let tiffData = cachedImage.tiffRepresentation,
                let bitmapRep = NSBitmapImageRep(data: tiffData),
                let jpegData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {

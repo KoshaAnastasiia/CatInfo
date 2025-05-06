@@ -1,7 +1,7 @@
 import Cocoa
 
 protocol ImageCacheServiceProtocol: Sendable {
-    func getImage(forKey key: String) -> NSImage?
+    func getImage(forKey key: String) async -> NSImage?
     func saveImage(_ image: NSImage, forKey key: String)
     func saveImageData(_ data: Data, forKey key: String)
     func clearCache()
